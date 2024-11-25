@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, MetaQuotes Ltd."
 #property link      "https://www.mql5.com"
-#property version   "1.02"
+#property version   "1.03"
 
 #include <CandleModel.mqh>
 CandleModel candleModel;
@@ -55,14 +55,8 @@ void OnTick()
       // Buscar los dos últimos virajes del Zigzag
       if (GetLastTwoFractures(two_values, two_times, handle_ZigZag))
       {
-         // Imprimir información de los virajes
-         PrintFormat("Primer Viraje: Fecha=%s, Valor=%.5f",
-                     TimeToString(two_times[1], TIME_DATE | TIME_MINUTES), two_values[1]);
-         PrintFormat("Segundo Viraje: Fecha=%s, Valor=%.5f",
-                     TimeToString(two_times[0], TIME_DATE | TIME_MINUTES), two_values[0]);
-
-         // Guardar información en el archivo
-         GuardarInformacion(two_values, two_times);
+         // Imprimir y guardar información en el archivo con datos consistentes
+         GuardarEImprimirInformacion(two_values, two_times);
       }
       else
       {
@@ -154,26 +148,31 @@ bool GetLastTwoFractures(double &get_values[], datetime &get_times[], int handle
 }
 
 //+------------------------------------------------------------------+
-//| Guardar información en archivo DailyCandleTrend.xls              |
+//| Guardar e imprimir información de los virajes del Zigzag         |
 //+------------------------------------------------------------------+
-void GuardarInformacion(double &values[], datetime &times[])
+void GuardarEImprimirInformacion(double &values[], datetime &times[])
 {
    string fileName = "DailyCandleTrend.xls";
    int fileHandle = FileOpen(fileName, FILE_WRITE | FILE_READ | FILE_CSV | FILE_ANSI);
+
+   // Aseguramos imprimir y guardar la misma información
+   string primerVirajeFecha = TimeToString(times[1], TIME_DATE | TIME_MINUTES);
+   double primerVirajeValor = values[1];
+   string segundoVirajeFecha = TimeToString(times[0], TIME_DATE | TIME_MINUTES);
+   double segundoVirajeValor = values[0];
+
+   // Imprimir en la consola
+   PrintFormat("Guardado: Primer Viraje: Fecha=%s, Valor=%.5f", primerVirajeFecha, primerVirajeValor);
+   PrintFormat("Guardado: Segundo Viraje: Fecha=%s, Valor=%.5f", segundoVirajeFecha, segundoVirajeValor);
+
    if (fileHandle != INVALID_HANDLE)
    {
       FileSeek(fileHandle, 0, SEEK_END); // Mover al final para agregar datos
 
-      // Escribir información de los virajes
+      // Escribir la misma información en el archivo
       FileWrite(fileHandle,
-                "Primer Viraje", TimeToString(times[1], TIME_DATE | TIME_MINUTES), values[2],
-                "Segundo Viraje", TimeToString(times[0], TIME_DATE | TIME_MINUTES), values[1]);
-
-      // Imprimir en la consola los datos que se guardaron
-      PrintFormat("Guardado: Primer Viraje: Fecha=%s, Valor=%.5f",
-                  TimeToString(times[1], TIME_DATE | TIME_MINUTES), values[1]);
-      PrintFormat("Guardado: Segundo Viraje: Fecha=%s, Valor=%.5f",
-                  TimeToString(times[0], TIME_DATE | TIME_MINUTES), values[0]);
+                "Primer Viraje", primerVirajeFecha, primerVirajeValor,
+                "Segundo Viraje", segundoVirajeFecha, segundoVirajeValor);
 
       FileClose(fileHandle);
       Print("Información guardada en el archivo: ", fileName);
