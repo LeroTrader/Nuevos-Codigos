@@ -1,0 +1,187 @@
+//+------------------------------------------------------------------+
+//|                                             DailyCandleTrend.mq5 |
+//|                                  Copyright 2024, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2024, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.01"
+
+#include <CandleModel.mqh>
+CandleModel candleModel;
+
+int   totalBars;
+double currentZigZag;
+
+// Variables globales para Zigzag
+int handle_ZigZag;
+double two_values[3];
+datetime two_times[3];
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+// Intentar inicializar el Zigzag
+   if(!PrepareZigzag(Symbol(), PERIOD_D1, handle_ZigZag))
+     {
+      Print("Error: No se pudo inicializar el Zigzag. Finalizando el EA.");
+      return INIT_FAILED;
+     }
+
+   Print("Zigzag inicializado correctamente.");
+   return INIT_SUCCEEDED;
+  }
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   Print("Asesor experto finalizado.");
+  }
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+   int bars = iBars(_Symbol, PERIOD_D1);
+   if(totalBars != bars)
+     {
+      totalBars = bars;
+
+      // Actualizar Zigzag
+      PrepareZigzag(_Symbol, _Period, handle_ZigZag);
+
+      // Buscar los dos últimos virajes del Zigzag
+      if(GetLastTwoFractures(two_values, two_times, handle_ZigZag))
+        {
+         // Imprimir la información en consola
+         PrintFormat("GetLastTwoFractures: el primero=%s, el segundo=%s",
+                     TimeToString(two_times[1], TIME_DATE|TIME_MINUTES),
+                     TimeToString(two_times[0], TIME_DATE|TIME_MINUTES));
+
+         // Guardar la información en el archivo
+         GuardarInformacion(two_values, two_times);
+        }
+      else
+        {
+         Print("No se ha podido encontrar los dos últimos virajes en el indicador Zigzag!");
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Crear el manejador del Zigzag y asegurar su disponibilidad       |
+//+------------------------------------------------------------------+
+bool PrepareZigzag(string sym, ENUM_TIMEFRAMES tf, int &h)
+  {
+   ResetLastError();
+   h = iCustom(sym, tf, "Examples\\Zigzag");
+   if(h == INVALID_HANDLE)
+     {
+      PrintFormat("%s: Fallo al crear el manejador del Zigzag. Código del error %d",
+                  __FUNCTION__, GetLastError());
+      return false;
+     }
+
+   int k = 0;
+   while(BarsCalculated(h) <= 0)
+     {
+      Sleep(50);
+      k++;
+      if(k > 100)
+        {
+         PrintFormat("No se ha podido calcular el Zigzag tras %d intentos.", k);
+         return false;
+        }
+     }
+
+   Print("El Zigzag está listo para usarse.");
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| Buscar los dos últimos virajes del Zigzag y colocarlos en arrays |
+//+------------------------------------------------------------------+
+bool GetLastTwoFractures(double &get_values[], datetime &get_times[], int handle)
+  {
+   double values[];         // Array dinámico para obtener los valores del Zigzag
+   datetime times[];        // Array dinámico para obtener los tiempos
+   int size = 100;          // Tamaño del array para copiar valores
+   ResetLastError();
+
+// Copiar los valores del Zigzag al array dinámico
+   int copied = CopyBuffer(handle, 0, 0, size, values);
+   if(copied < size)
+     {
+      PrintFormat("%s: No se han copiado %d valores del indicador con el manejador=%d. Código del error %d",
+                  __FUNCTION__, size, handle, GetLastError());
+      return false;
+     }
+
+   ArraySetAsSeries(values, true); // Definir el orden como serie temporal
+   ArrayResize(get_values, 3);     // Ajustar tamaño del array de salida
+   ArrayResize(get_times, 3);      // Ajustar tamaño del array de tiempos
+
+   int positions[3];               // Array para almacenar las posiciones de los virajes
+   int i = 0, k = 0;
+
+// Buscar los virajes en los valores del Zigzag
+   while(i < size)
+     {
+      double v = values[i];
+      if(v != 0.0)
+        {
+         positions[k] = i;
+         get_values[k] = values[i];
+         k++;
+         if(k > 2)
+            break; // Detenerse después de encontrar dos virajes
+        }
+      i++;
+     }
+
+// Copiar los tiempos correspondientes a las posiciones encontradas
+   if(CopyTime(_Symbol, _Period, 0, size, times) <= 0)
+     {
+      PrintFormat("%s: Fallo al copiar %d valores desde CopyTime(). Código del error %d",
+                  __FUNCTION__, size, GetLastError());
+      return false;
+     }
+
+   ArraySetAsSeries(times, true);   // Definir el orden como serie temporal
+   get_times[0] = times[positions[1]]; // Tiempo del penúltimo viraje
+   get_times[1] = times[positions[2]]; // Tiempo del último viraje
+
+   return true;
+  }
+
+
+//+------------------------------------------------------------------+
+//| Guardar información en archivo DailyCandleTrend.xls              |
+//+------------------------------------------------------------------+
+void GuardarInformacion(double &values[], datetime &times[])
+  {
+   string fileName = "DailyCandleTrend.xls";
+   int fileHandle = FileOpen(fileName, FILE_WRITE | FILE_READ | FILE_CSV | FILE_ANSI);
+   if(fileHandle != INVALID_HANDLE)
+     {
+      FileSeek(fileHandle, 0, SEEK_END); // Mover al final para agregar datos
+
+      // Escribir información de los virajes
+      FileWrite(fileHandle,
+                "Primer Viraje", TimeToString(times[1], TIME_DATE | TIME_MINUTES), values[1],
+                "Segundo Viraje", TimeToString(times[0], TIME_DATE | TIME_MINUTES), values[0]);
+
+      FileClose(fileHandle);
+      Print("Información guardada en el archivo: ", fileName);
+     }
+   else
+     {
+      Print("Error al abrir el archivo: ", GetLastError());
+     }
+  }
+//+------------------------------------------------------------------+
