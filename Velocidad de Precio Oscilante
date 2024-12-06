@@ -1,0 +1,285 @@
+//+------------------------------------------------------------------+
+//|                        Velocidad de Precio Oscilante.mq5         |
+//|                       Copyright 2024, MetaQuotes Ltd.            |
+//|                                https://www.mql5.com              |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2024, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.07"
+
+// Enumeraciones
+enum ENUM_TIMEFRAME_UNIT { SECONDS, MINUTES, HOURS };
+enum ENUM_SPEED_RESET { RESET, RETAIN }; // Opciones para reiniciar o retener datos
+
+// Inputs ajustables
+input ENUM_TIMEFRAME_UNIT TimeframeUnit = SECONDS;  // Unidad de tiempo
+input int Interval = 10;                           // Intervalo de tiempo (en unidad seleccionada)
+input int BufferSize = 50;                         // Tamaño del buffer para almacenar velocidades
+input ENUM_SPEED_RESET ResetSpeed = RETAIN;        // Manejo de velocidad: RESET (reiniciar) o RETAIN (retener)
+input ENUM_SPEED_RESET ResetMovement = RETAIN;     // Manejo de movimiento: RESET (reiniciar) o RETAIN (retener)
+
+// Variables globales
+double lastPrice = 0.0;         // Último precio
+datetime lastTime = 0;          // Último tiempo
+double upSpeedBuffer[];         // Buffer dinámico para velocidades hacia arriba
+double downSpeedBuffer[];       // Buffer dinámico para velocidades hacia abajo
+double lastUpSpeed = 0.0;       // Última velocidad hacia arriba registrada
+double lastDownSpeed = 0.0;     // Última velocidad hacia abajo registrada
+double lastUpMovement = 0.0;    // Último movimiento hacia arriba registrado
+double lastDownMovement = 0.0;  // Último movimiento hacia abajo registrado
+int upBufferIndex = 0;          // Índice del buffer hacia arriba
+int downBufferIndex = 0;        // Índice del buffer hacia abajo
+
+double volumeBuffer[];          // Buffer dinámico para acumulación de volumen
+int volumeBufferIndex = 0;      // Índice del buffer de volumen
+input ENUM_SPEED_RESET ResetVolume = RETAIN; // Manejo de volumen: RESET o RETAIN
+
+
+
+//+------------------------------------------------------------------+
+//| Función de inicialización                                        |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+// Inicialización de buffers
+   ArrayResize(upSpeedBuffer, BufferSize);
+   ArrayInitialize(upSpeedBuffer, 0.0);
+   ArrayResize(downSpeedBuffer, BufferSize);
+   ArrayInitialize(downSpeedBuffer, 0.0);
+
+   ArrayResize(volumeBuffer, BufferSize);
+   ArrayInitialize(volumeBuffer, 0.0);
+
+
+   Print("Inicialización completada. Tamaño de buffers: ", BufferSize);
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+//| Función OnTick                                                   |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+   double upSpeed, downSpeed, upMovement, downMovement;
+
+// Calcular métricas de precio
+   MeasurePriceMetrics(_Symbol, lastPrice, lastTime, Interval, TimeframeUnit,
+                       upSpeed, downSpeed, upMovement, downMovement);
+
+
+   int     attempts=0;     // Count of attempts
+   bool    success=false;  // The flag of a successful copying of ticks
+   MqlTick tick_array[];   // Tick receiving array
+   MqlTick lasttick;       // To receive last tick data
+   SymbolInfoTick(_Symbol,lasttick);
+   int ticks=ArraySize(tick_array);
+
+   GetTickDescription(tick_array[100]);
+
+
+
+// Manejar velocidades y movimientos según configuración
+   ManageSpeedAndMovement(upSpeed, downSpeed, upMovement, downMovement);
+
+// Actualizar buffers circulares
+   UpdateSpeedBuffers(upSpeed, downSpeed);
+
+// Mostrar información en el gráfico
+   DisplayMetrics(upSpeed, downSpeed, upMovement, downMovement);
+  }
+
+//+------------------------------------------------------------------+
+//| Mide métricas de precio                                          |
+//+------------------------------------------------------------------+
+void MeasurePriceMetrics(string symbol, double &last_price, datetime &last_time, int interval,
+                         ENUM_TIMEFRAME_UNIT unit, double &upSpeed, double &downSpeed,
+                         double &upMovement, double &downMovement)
+  {
+   upSpeed = downSpeed = upMovement = downMovement = 0.0;
+
+   double current_price = SymbolInfoDouble(symbol, SYMBOL_LAST);
+   if(current_price == 0.0)
+     {
+      Print("Error: No se pudo obtener SYMBOL_LAST");
+      return;
+     }
+
+   datetime current_time = TimeCurrent();
+   double interval_seconds = ConvertToSeconds(interval, unit);
+
+   double time_difference = (double)(current_time - last_time);
+   if(time_difference < interval_seconds)
+      return;
+
+   double price_difference = (current_price - last_price) / SymbolInfoDouble(symbol, SYMBOL_POINT);
+
+   if(price_difference > 0)
+     {
+      upMovement = price_difference;
+      upSpeed = price_difference / time_difference;
+     }
+   else
+      if(price_difference < 0)
+        {
+         downMovement = MathAbs(price_difference);
+         downSpeed = downMovement / time_difference;
+        }
+
+   last_price = current_price;
+   last_time = current_time;
+  }
+
+//+------------------------------------------------------------------+
+//| Manejar velocidades y movimientos                                |
+//+------------------------------------------------------------------+
+void ManageSpeedAndMovement(double upSpeed, double downSpeed, double upMovement, double downMovement)
+  {
+// Manejar velocidades
+   if(ResetSpeed == RESET)
+     {
+      lastUpSpeed = MathMax(upSpeed, 0.0);
+      lastDownSpeed = MathMax(downSpeed, 0.0);
+     }
+   else
+     {
+      if(upSpeed > 0.0)
+         lastUpSpeed = upSpeed;
+      if(downSpeed > 0.0)
+         lastDownSpeed = downSpeed;
+     }
+
+// Manejar movimientos
+   if(ResetMovement == RESET)
+     {
+      lastUpMovement = MathMax(upMovement, 0.0);
+      lastDownMovement = MathMax(downMovement, 0.0);
+     }
+   else
+     {
+      if(upMovement > 0.0)
+         lastUpMovement = upMovement;
+      if(downMovement > 0.0)
+         lastDownMovement = downMovement;
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Actualizar buffers de velocidad                                  |
+//+------------------------------------------------------------------+
+void UpdateSpeedBuffers(double upSpeed, double downSpeed)
+  {
+   if(upSpeed > 0.0)
+     {
+      upSpeedBuffer[upBufferIndex] = upSpeed;
+      upBufferIndex = (upBufferIndex + 1) % BufferSize;
+     }
+   if(downSpeed > 0.0)
+     {
+      downSpeedBuffer[downBufferIndex] = downSpeed;
+      downBufferIndex = (downBufferIndex + 1) % BufferSize;
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Mostrar métricas en el gráfico                                   |
+//+------------------------------------------------------------------+
+void DisplayMetrics(double upSpeed, double downSpeed, double upMovement, double downMovement)
+  {
+
+   Comment("Velocidad del precio:\n",
+           "Movimiento Hacia Arriba: ", DoubleToString(lastUpMovement, 2), " puntos\n",
+           "Velocidad Hacia Arriba: ", DoubleToString(lastUpSpeed, 2), " ", GetUnitLabel(TimeframeUnit), "\n",
+           "Movimiento Hacia Abajo: ", DoubleToString(lastDownMovement, 2), " puntos\n",
+           "Velocidad Hacia Abajo: ", DoubleToString(lastDownSpeed, 2), " ", GetUnitLabel(TimeframeUnit), "\n",
+           "Últimas velocidades hacia arriba: ", BufferToString(upSpeedBuffer), "\n",
+           "Últimas velocidades hacia abajo: ", BufferToString(downSpeedBuffer), "\n",
+           "Últimos volúmenes acumulados: ", BufferToString(volumeBuffer));
+
+  }
+
+//+------------------------------------------------------------------+
+//| Conversión de intervalo a segundos                               |
+//+------------------------------------------------------------------+
+int ConvertToSeconds(int value, ENUM_TIMEFRAME_UNIT unit)
+  {
+   switch(unit)
+     {
+      case MINUTES:
+         return value * 60;
+      case HOURS:
+         return value * 3600;
+      default:
+         return value;
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Obtener etiqueta de unidad de tiempo                             |
+//+------------------------------------------------------------------+
+string GetUnitLabel(ENUM_TIMEFRAME_UNIT unit)
+  {
+   switch(unit)
+     {
+      case SECONDS:
+         return "puntos/seg";
+      case MINUTES:
+         return "puntos/min";
+      case HOURS:
+         return "puntos/hr";
+     }
+   return "";
+  }
+
+//+------------------------------------------------------------------+
+//| Convertir buffer en string para visualización                    |
+//+------------------------------------------------------------------+
+string BufferToString(const double &buffer[])
+  {
+   string result = "";
+   for(int i = 0; i < ArraySize(buffer); i++)
+      if(buffer[i] != 0.0)
+         result += DoubleToString(buffer[i], 2) + ", ";
+   return result;
+  }
+
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Returns the string description of a tick                         |
+//+------------------------------------------------------------------+
+string GetTickDescription(MqlTick &tick)
+  {
+   string desc=StringFormat("%s.%03d ",
+                            TimeToString(tick.time),tick.time_msc%1000);
+//--- Checking flags
+   bool buy_tick=((tick.flags&TICK_FLAG_BUY)==TICK_FLAG_BUY);
+   bool sell_tick=((tick.flags&TICK_FLAG_SELL)==TICK_FLAG_SELL);
+   bool ask_tick=((tick.flags&TICK_FLAG_ASK)==TICK_FLAG_ASK);
+   bool bid_tick=((tick.flags&TICK_FLAG_BID)==TICK_FLAG_BID);
+   bool last_tick=((tick.flags&TICK_FLAG_LAST)==TICK_FLAG_LAST);
+   bool volume_tick=((tick.flags&TICK_FLAG_VOLUME)==TICK_FLAG_VOLUME);
+//--- Checking trading flags in a tick first
+   if(buy_tick || sell_tick)
+     {
+      //--- Forming an output for the trading tick
+      desc=desc+(buy_tick?StringFormat("Buy Tick: Last=%G Volume=%d ",tick.last,tick.volume):"");
+      desc=desc+(sell_tick?StringFormat("Sell Tick: Last=%G Volume=%d ",tick.last,tick.volume):"");
+      desc=desc+(ask_tick?StringFormat("Ask=%G ",tick.ask):"");
+      desc=desc+(bid_tick?StringFormat("Bid=%G ",tick.ask):"");
+      desc=desc+"(Trade tick)";
+     }
+   else
+     {
+      //--- Form a different output for an info tick
+      desc=desc+(ask_tick?StringFormat("Ask=%G ",tick.ask):"");
+      desc=desc+(bid_tick?StringFormat("Bid=%G ",tick.ask):"");
+      desc=desc+(last_tick?StringFormat("Last=%G ",tick.last):"");
+      desc=desc+(volume_tick?StringFormat("Volume=%d ",tick.volume):"");
+      desc=desc+"(Info tick)";
+     }
+//--- Returning tick description
+   return desc;
+  }
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
