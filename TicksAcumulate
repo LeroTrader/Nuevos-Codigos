@@ -1,0 +1,182 @@
+#ifndef __TICKS_ACUMULATE_MQH__
+#define __TICKS_ACUMULATE_MQH__
+
+#include <TimeframeUtils.mqh> // Incluir las utilidades para unidades de tiempo
+
+// Clase para analizar ticks y volumen
+class TickVolumeAnalyzer
+{
+private:
+   ENUM_TIMEFRAMES   TimeframeToAnalyze;
+   int               Interval;
+   ENUM_TIMEFRAME_UNIT UnitOfTime;
+   int               MaxIntervals;
+   int               BufferSize;
+
+   datetime          lastCalculationTime;
+   int               tickCount;
+   int               tickHistory[];
+   int               ultimosTickAcumulados[];
+
+   // Variables para velocidad de ticks
+   datetime          speedStartTime;
+   int               tickSpeedCount;
+   double            tickSpeed;
+   int               speedInterval;
+   double            speedThreshold; // Umbral para la velocidad de ticks
+
+public:
+   // Constructor
+   TickVolumeAnalyzer(ENUM_TIMEFRAMES timeframe, int interval, ENUM_TIMEFRAME_UNIT unit, int maxIntervals, int bufferSize, int speedIntervalSec, double speedThresholdVal)
+   {
+      TimeframeToAnalyze = timeframe;
+      Interval = interval;
+      UnitOfTime = unit;
+      MaxIntervals = maxIntervals;
+      BufferSize = bufferSize;
+
+      lastCalculationTime = 0;
+      tickCount = 0;
+
+      speedStartTime = TimeCurrent();
+      tickSpeedCount = 0;
+      tickSpeed = 0.0;
+      speedInterval = speedIntervalSec; // Intervalo para medir la velocidad de ticks
+      speedThreshold = speedThresholdVal; // Umbral configurable para la velocidad de ticks
+
+      ArrayResize(tickHistory, MaxIntervals);
+      ArrayResize(ultimosTickAcumulados, BufferSize);
+   }
+
+   // Inicialización
+   void InitializeTickVolumeAnalyzer()
+   {
+      Print("TickVolumeAnalyzer inicializado. Analizando timeframe: ", EnumToString(TimeframeToAnalyze));
+   }
+
+   // Procesar cada tick
+   void OnTick()
+   {
+      // Obtener el volumen de la última vela cerrada (vela 1)
+      long volumeLastClosedCandle = iVolume(Symbol(), TimeframeToAnalyze, 1);
+
+      // Incrementar el conteo de ticks para velocidad
+      tickSpeedCount++;
+      UpdateTickSpeed();
+
+      CalculateAccumulatedTicks();
+
+      double averageTicks = CalculateAverageTicks();
+      string notification;
+
+      // Comprobar si los ticks acumulados superan el promedio
+      if (volumeLastClosedCandle > averageTicks)
+      {
+         notification = "Volumen elevado: El volumen acumulado supera el promedio.";
+      }
+      else
+      {
+         notification = "Volumen no relevante: El volumen acumulado está dentro del promedio.";
+      }
+
+      // Mensaje basado en la velocidad de ticks
+      string speedNotification;
+      if (tickSpeed > speedThreshold)
+      {
+         speedNotification = "Alta velocidad de ticks.";
+      }
+      else
+      {
+         speedNotification = "Velocidad de ticks no relevante.";
+      }
+
+      // Mostrar el resultado en el gráfico
+      /*Comment(
+         "Análisis de Ticks y Volumen:\n",
+         "Volumen de la última vela cerrada (", EnumToString(TimeframeToAnalyze), "): ", volumeLastClosedCandle, "\n",
+         "Ticks acumulados en el Intervalo seleccionado (", Interval, " ", TimeframeUtils::GetUnitLabel(UnitOfTime), "): ", tickCount, "\n",
+         "Promedio de Acumulados de Ticks en los últimos ", MaxIntervals, " intervalos: ", averageTicks, "\n",
+         "Estado: ", notification, "\n\n",
+         "Velocidad actual de Ticks: ", DoubleToString(tickSpeed, 2), " ticks/seg\n",
+         "Estado de Velocidad: ", speedNotification, "\n",
+         "Nota: Los ticks representan eventos del mercado, como cambios de precios o actualizaciones de cotizaciones."
+      );*/
+   }
+
+private:
+   // Calcular velocidad de ticks
+   void UpdateTickSpeed()
+   {
+      datetime currentTime = TimeCurrent();
+      double elapsedSeconds = (double)(currentTime - speedStartTime);
+
+      if (elapsedSeconds >= speedInterval)
+      {
+         tickSpeed = tickSpeedCount / elapsedSeconds; // Calcular ticks por segundo
+         tickSpeedCount = 0;                         // Reiniciar contador
+         speedStartTime = currentTime;               // Actualizar tiempo inicial
+      }
+   }
+
+   void CalculateAccumulatedTicks()
+   {
+      datetime currentTime = TimeCurrent();
+      double intervalInSeconds = ConvertToSeconds(Interval, UnitOfTime);
+
+      if ((currentTime - lastCalculationTime) >= intervalInSeconds)
+      {
+         AddToTickHistory(tickCount);
+         AddToDynamicBuffer(ultimosTickAcumulados, tickCount);
+         tickCount = 0;
+         lastCalculationTime = currentTime;
+      }
+
+      tickCount++;
+   }
+
+   void AddToTickHistory(int ticks)
+   {
+      for (int i = 1; i < ArraySize(tickHistory); i++)
+      {
+         tickHistory[i - 1] = tickHistory[i];
+      }
+      tickHistory[ArraySize(tickHistory) - 1] = ticks;
+   }
+
+   void AddToDynamicBuffer(int &buffer[], int value)
+   {
+      for (int i = 1; i < ArraySize(buffer); i++)
+      {
+         buffer[i - 1] = buffer[i];
+      }
+      buffer[ArraySize(buffer) - 1] = value;
+   }
+
+   double CalculateAverageTicks()
+   {
+      double sum = 0;
+      int count = 0;
+
+      for (int i = 0; i < ArraySize(tickHistory); i++)
+      {
+         if (tickHistory[i] > 0)
+         {
+            sum += tickHistory[i];
+            count++;
+         }
+      }
+      return (count > 0) ? sum / count : 0;
+   }
+
+   double ConvertToSeconds(int value, ENUM_TIMEFRAME_UNIT unit)
+   {
+      switch (unit)
+      {
+         case MINUTES: return value * 60;
+         case HOURS: return value * 3600;
+         default: return value;
+      }
+   }
+};
+
+#endif
