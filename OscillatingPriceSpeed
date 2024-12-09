@@ -1,0 +1,204 @@
+//+------------------------------------------------------------------+
+//|                   OscillatingPriceSpeed.mqh                      |
+//|          Clase para analizar velocidad y movimiento de precios   |
+//+------------------------------------------------------------------+
+#ifndef __OSCILLATING_PRICE_SPEED_MQH__
+#define __OSCILLATING_PRICE_SPEED_MQH__
+
+#include <TimeframeUtils.mqh> // Incluir las utilidades para unidades de tiempo
+
+enum ENUM_SPEED_RESET { RESET, RETAIN }; // Opciones para manejar velocidades y movimientos
+
+class OscillatingPriceSpeed
+{
+private:
+   ENUM_TIMEFRAME_UNIT TimeframeUnit;
+   int Interval;
+   int BufferSize;
+   ENUM_SPEED_RESET ResetSpeed;
+   ENUM_SPEED_RESET ResetMovement;
+   double SpeedThreshold; // Umbral de velocidad en puntos/minuto
+
+   double lastPrice;
+   datetime lastTime;
+   double upSpeedBuffer[];
+   double downSpeedBuffer[];
+   double lastUpSpeed;
+   double lastDownSpeed;
+   double lastUpMovement;
+   double lastDownMovement;
+   int upBufferIndex;
+   int downBufferIndex;
+
+public:
+   // Constructor
+   OscillatingPriceSpeed(ENUM_TIMEFRAME_UNIT timeframeUnit, int interval, int bufferSize, 
+                         ENUM_SPEED_RESET resetSpeed, ENUM_SPEED_RESET resetMovement,
+                         double speedThreshold)
+   {
+      TimeframeUnit = timeframeUnit;
+      Interval = interval;
+      BufferSize = bufferSize;
+      ResetSpeed = resetSpeed;
+      ResetMovement = resetMovement;
+      SpeedThreshold = speedThreshold;
+
+      lastPrice = 0.0;
+      lastTime = 0;
+      lastUpSpeed = lastDownSpeed = 0.0;
+      lastUpMovement = lastDownMovement = 0.0;
+      upBufferIndex = downBufferIndex = 0;
+
+      ArrayResize(upSpeedBuffer, BufferSize);
+      ArrayInitialize(upSpeedBuffer, 0.0);
+
+      ArrayResize(downSpeedBuffer, BufferSize);
+      ArrayInitialize(downSpeedBuffer, 0.0);
+   }
+
+   // Inicialización
+   void InitializeOscillatingPriceSpeed()
+   {
+      Print("OscillatingPriceSpeed inicializado. Tamaño de buffers: ", BufferSize);
+   }
+
+   // Procesar cada tick
+   void OnTick()
+   {
+      double upSpeed, downSpeed, upMovement, downMovement;
+      MeasurePriceMetrics(_Symbol, upSpeed, downSpeed, upMovement, downMovement);
+
+      HandleSpeedReset(upSpeed, downSpeed);
+      HandleMovementReset(upMovement, downMovement);
+
+      StoreInBuffers(upSpeed, downSpeed);
+
+      // Verificar si las velocidades superan el umbral
+      string upSpeedMessage = (lastUpSpeed > SpeedThreshold) 
+         ? "Alta velocidad hacia arriba detectada!" 
+         : "Velocidad hacia arriba no relevante.";
+      string downSpeedMessage = (lastDownSpeed > SpeedThreshold) 
+         ? "Alta velocidad hacia abajo detectada!" 
+         : "Velocidad hacia abajo no relevante.";
+
+      // Mostrar información en el gráfico
+      Comment("Velocidad del precio (en puntos/minuto):\n",
+              "Velocidad Hacia Arriba (", TimeframeUtils::GetUnitLabel(TimeframeUnit), "): ", 
+              DoubleToString(lastUpSpeed, 2), " (", upSpeedMessage, ")\n",
+              "Velocidad Hacia Abajo (", TimeframeUtils::GetUnitLabel(TimeframeUnit), "): ", 
+              DoubleToString(lastDownSpeed, 2), " (", downSpeedMessage, ")\n",
+              "Últimas velocidades hacia arriba: ", BufferToString(upSpeedBuffer), "\n",
+              "Últimas velocidades hacia abajo: ", BufferToString(downSpeedBuffer));
+   }
+
+private:
+   // Calcular métricas de precio
+   void MeasurePriceMetrics(string symbol, double &upSpeed, double &downSpeed, double &upMovement, double &downMovement)
+   {
+      upSpeed = downSpeed = upMovement = downMovement = 0.0;
+
+      double currentPrice = SymbolInfoDouble(symbol, SYMBOL_LAST);
+      if (currentPrice == 0.0)
+      {
+         Print("Error: No se pudo obtener SYMBOL_LAST");
+         return;
+      }
+
+      datetime currentTime = TimeCurrent();
+      double intervalMinutes = ConvertToMinutes(Interval, TimeframeUnit);
+
+      double timeDifference = (double)(currentTime - lastTime) / 60.0; // Convertir diferencia de tiempo a minutos
+      if (timeDifference < intervalMinutes)
+         return;
+
+      double priceDifference = (currentPrice - lastPrice) / SymbolInfoDouble(symbol, SYMBOL_POINT);
+
+      if (priceDifference > 0)
+      {
+         upMovement = priceDifference;
+         upSpeed = priceDifference / timeDifference; // Puntos por minuto
+      }
+      else if (priceDifference < 0)
+      {
+         downMovement = MathAbs(priceDifference);
+         downSpeed = MathAbs(priceDifference) / timeDifference; // Puntos por minuto
+      }
+
+      lastPrice = currentPrice;
+      lastTime = currentTime;
+   }
+
+   // Manejar reinicio de velocidad
+   void HandleSpeedReset(double upSpeed, double downSpeed)
+   {
+      if (ResetSpeed == RESET)
+      {
+         lastUpSpeed = upSpeed > 0.0 ? upSpeed : 0.0;
+         lastDownSpeed = downSpeed > 0.0 ? downSpeed : 0.0;
+      }
+      else if (ResetSpeed == RETAIN)
+      {
+         if (upSpeed > 0.0)
+            lastUpSpeed = upSpeed;
+         if (downSpeed > 0.0)
+            lastDownSpeed = downSpeed;
+      }
+   }
+
+   // Manejar reinicio de movimientos
+   void HandleMovementReset(double upMovement, double downMovement)
+   {
+      if (ResetMovement == RESET)
+      {
+         lastUpMovement = upMovement > 0.0 ? upMovement : 0.0;
+         lastDownMovement = downMovement > 0.0 ? downMovement : 0.0;
+      }
+      else if (ResetMovement == RETAIN)
+      {
+         if (upMovement > 0.0)
+            lastUpMovement = upMovement;
+         if (downMovement > 0.0)
+            lastDownMovement = downMovement;
+      }
+   }
+
+   // Almacenar en buffers
+   void StoreInBuffers(double upSpeed, double downSpeed)
+   {
+      if (upSpeed > 0.0)
+      {
+         upSpeedBuffer[upBufferIndex] = upSpeed;
+         upBufferIndex = (upBufferIndex + 1) % BufferSize;
+      }
+      if (downSpeed > 0.0)
+      {
+         downSpeedBuffer[downBufferIndex] = downSpeed;
+         downBufferIndex = (downBufferIndex + 1) % BufferSize;
+      }
+   }
+
+   // Convertir intervalo a minutos
+   double ConvertToMinutes(int value, ENUM_TIMEFRAME_UNIT unit)
+   {
+      switch (unit)
+      {
+         case MINUTES: return value; // Ya está en minutos
+         case HOURS: return value * 60; // Convertir horas a minutos
+         default: return value / 60.0; // Asumir segundos y convertir a minutos
+      }
+   }
+
+   // Convertir buffer a string
+   string BufferToString(const double &buffer[])
+   {
+      string result = "";
+      for (int i = 0; i < ArraySize(buffer); i++)
+      {
+         if (buffer[i] != 0.0)
+            result += DoubleToString(buffer[i], 2) + ", ";
+      }
+      return result;
+   }
+};
+
+#endif
