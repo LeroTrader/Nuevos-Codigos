@@ -1,0 +1,66 @@
+//+------------------------------------------------------------------+
+//|                                 SpeedPoint_TicksAcumulate_V1.mq5 |
+//|                                  Copyright 2024, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2024, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+
+
+#include <MIS_FUNCIONES\TicksAcumulate.mqh>
+#include <MIS_FUNCIONES\SpeedPoint.mqh>
+
+// Inputs ajustables TicksAcumulate
+input group "==== TickVolumeAnalyzer ====";
+
+input ENUM_TIMEFRAMES TimeframeToAnalyze = PERIOD_CURRENT;  // Timeframe Volumen
+input int IntervalTicksAcumulate = 5;                       // Intervalo de Acumulacion de Volumen
+input ENUM_TIMEFRAME_UNIT UnitOfTime = MINUTES;             // Unidad de tiempo del Intervalo
+input int MaxIntervals = 10;                                // Cantidad de Intervalos para Promediar Ticks
+input int BufferSizeTicksAcumulate = 10;                    // Tamaño del buffer para almacenar ticks acumulados
+
+input double VelocidadUmbral = 2.00;
+
+// Inputs ajustables SpeedPoint
+input group "==== OscillatingPriceSpeed ====";
+input int IntervalSpeedPoint = 5;                          // Intervalo de tiempo (en unidad seleccionada)
+input ENUM_TIMEFRAME_UNIT TimeframeUnit = MINUTES;          // Unidad de tiempo
+input int BufferSizeSpeedPoint = 10;                        // Tamaño del buffer para almacenar velocidades
+input double SpeedThreshold = 1.5;
+input ENUM_SPEED_RESET ResetSpeed = RETAIN;                 // Manejo de velocidad: RESET (reiniciar) o RETAIN (retener)
+input ENUM_SPEED_RESET ResetMovement = RETAIN;              // Manejo de movimiento: RESET (reiniciar) o RETAIN (retener)
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+
+   OscillatingPriceSpeed analyzerPriceSpeed(TimeframeUnit,IntervalSpeedPoint,BufferSizeSpeedPoint,ResetSpeed,ResetMovement,SpeedThreshold);
+   analyzerPriceSpeed.InitializeOscillatingPriceSpeed();
+
+   TickVolumeAnalyzer analyzerTickVolume(PERIOD_M15, 5, MINUTES, 10,10,30,VelocidadUmbral); // Velocidad en intervalos de X segundos
+   analyzerTickVolume.InitializeTickVolumeAnalyzer();
+
+   return(INIT_SUCCEEDED);
+
+  }
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+   static TickVolumeAnalyzer analyzerTick(TimeframeToAnalyze, IntervalTicksAcumulate, UnitOfTime, MaxIntervals, BufferSizeTicksAcumulate,30,VelocidadUmbral);
+   analyzerTick.OnTick();
+
+
+   static OscillatingPriceSpeed analyzerPrice(TimeframeUnit,IntervalSpeedPoint,BufferSizeSpeedPoint,ResetSpeed,ResetMovement,SpeedThreshold);
+   analyzerPrice.OnTick();
+
+
+
+
+  }
+//+------------------------------------------------------------------+
